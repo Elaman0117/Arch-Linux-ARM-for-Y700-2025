@@ -18,6 +18,10 @@ Environment inputs:
   DISTRO                     default: noble
   ARCH                       default: arm64
   MIRROR                     default: http://ports.ubuntu.com/ubuntu-ports
+  DEBOOTSTRAP_VARIANT        default: minbase; set empty for debootstrap default
+  RESOLV_CONF_CONTENT        optional /etc/resolv.conf contents for chroot
+  APT_HTTP_PROXY             optional apt proxy used only during provisioning
+  APT_HTTPS_PROXY            optional apt https proxy; defaults to APT_HTTP_PROXY
   APT_SOURCES_LIST           optional full sources.list replacement
   ROOTFS_IMAGE_SIZE          default: 14G
   ROOTFS_UUID                optional ext4 UUID
@@ -62,6 +66,10 @@ ci_require_cmd sha256sum
 DISTRO=${DISTRO:-noble}
 ARCH=${ARCH:-arm64}
 MIRROR=${MIRROR:-http://ports.ubuntu.com/ubuntu-ports}
+DEBOOTSTRAP_VARIANT=${DEBOOTSTRAP_VARIANT-minbase}
+RESOLV_CONF_CONTENT=${RESOLV_CONF_CONTENT:-}
+APT_HTTP_PROXY=${APT_HTTP_PROXY:-${http_proxy:-${HTTP_PROXY:-}}}
+APT_HTTPS_PROXY=${APT_HTTPS_PROXY:-${https_proxy:-${HTTPS_PROXY:-${APT_HTTP_PROXY:-}}}}
 OUTPUT_PREFIX=${OUTPUT_PREFIX:-${DISTRO}-${ARCH}}
 OUTPUT_DIR=${OUTPUT_DIR:-out/ci-rootfs}
 ROOTFS_IMAGE_SIZE=${ROOTFS_IMAGE_SIZE:-14G}
@@ -120,7 +128,11 @@ mount -o loop "$rootfs_img" "$rootfs_dir"
 mounted=1
 
 ci_log "debootstrap $DISTRO/$ARCH from $MIRROR"
-debootstrap --arch="$ARCH" --variant=minbase "$DISTRO" "$rootfs_dir" "$MIRROR"
+debootstrap_args=(--arch="$ARCH")
+if [ -n "$DEBOOTSTRAP_VARIANT" ]; then
+  debootstrap_args+=(--variant="$DEBOOTSTRAP_VARIANT")
+fi
+debootstrap "${debootstrap_args[@]}" "$DISTRO" "$rootfs_dir" "$MIRROR"
 
 if [ -n "${APT_SOURCES_LIST:-}" ]; then
   printf '%s\n' "$APT_SOURCES_LIST" > "$rootfs_dir/etc/apt/sources.list"
@@ -137,7 +149,11 @@ printf '%s\n' "$HOSTNAME_NAME" > "$rootfs_dir/etc/hostname"
 touch "$rootfs_dir/etc/hosts"
 sed -i '/^127\.0\.1\.1\b/d' "$rootfs_dir/etc/hosts"
 printf '127.0.1.1 %s\n' "$HOSTNAME_NAME" >> "$rootfs_dir/etc/hosts"
-cp /etc/resolv.conf "$rootfs_dir/etc/resolv.conf"
+if [ -n "$RESOLV_CONF_CONTENT" ]; then
+  printf '%s\n' "$RESOLV_CONF_CONTENT" > "$rootfs_dir/etc/resolv.conf"
+else
+  cp /etc/resolv.conf "$rootfs_dir/etc/resolv.conf"
+fi
 
 mount --bind /dev "$rootfs_dir/dev"
 mount --bind /dev/pts "$rootfs_dir/dev/pts"
@@ -150,6 +166,17 @@ cat > "$rootfs_dir/root/ci-provision.sh" <<'PROVISION'
 set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
+
+if [ -n "${APT_HTTP_PROXY:-}" ] || [ -n "${APT_HTTPS_PROXY:-}" ]; then
+  mkdir -p /etc/apt/apt.conf.d
+  : > /etc/apt/apt.conf.d/99ci-proxy
+  if [ -n "${APT_HTTP_PROXY:-}" ]; then
+    printf 'Acquire::http::Proxy "%s";\n' "$APT_HTTP_PROXY" >> /etc/apt/apt.conf.d/99ci-proxy
+  fi
+  if [ -n "${APT_HTTPS_PROXY:-}" ]; then
+    printf 'Acquire::https::Proxy "%s";\n' "$APT_HTTPS_PROXY" >> /etc/apt/apt.conf.d/99ci-proxy
+  fi
+fi
 
 apt-get update
 apt-get install -y $PACKAGE_LIST
@@ -223,6 +250,7 @@ if [ "$CLEAN_APT_CACHE" = 1 ]; then
   apt-get clean
   rm -rf /var/lib/apt/lists/*
 fi
+rm -f /etc/apt/apt.conf.d/99ci-proxy
 
 rm -f /etc/machine-id
 touch /etc/machine-id
@@ -256,6 +284,12 @@ chroot "$rootfs_dir" env -i \
   TZ_REGION="$TZ_REGION" \
   LOCALES="$LOCALES" \
   LANG_NAME="$LANG_NAME" \
+  APT_HTTP_PROXY="$APT_HTTP_PROXY" \
+  APT_HTTPS_PROXY="$APT_HTTPS_PROXY" \
+  http_proxy="$APT_HTTP_PROXY" \
+  https_proxy="$APT_HTTPS_PROXY" \
+  HTTP_PROXY="$APT_HTTP_PROXY" \
+  HTTPS_PROXY="$APT_HTTPS_PROXY" \
   CLEAN_APT_CACHE="$CLEAN_APT_CACHE" \
   bash /root/ci-provision.sh
 
@@ -274,6 +308,7 @@ cat > "$rootfs_dir/BUILD-INFO.txt" <<INFO
 generated=$(date -u -Iseconds)
 distro=$DISTRO
 arch=$ARCH
+debootstrap_variant=$DEBOOTSTRAP_VARIANT
 mirror=$MIRROR
 hostname=$HOSTNAME_NAME
 default_user=$DEFAULT_USER_NAME

@@ -10,19 +10,20 @@ on:
       output_prefix:
         description: Output artifact prefix
         required: true
-        default: y700-noble-arm64
+        default: y700-kubuntu2604-arm64
         type: string
       rootfs_config:
         description: Rootfs config as KEY=value lines
         required: true
         type: string
         default: |
-          DISTRO=noble
+          DISTRO=resolute
           ARCH=arm64
           MIRROR=http://ports.ubuntu.com/ubuntu-ports
-          ROOTFS_IMAGE_SIZE=14G
+          DEBOOTSTRAP_VARIANT=
+          ROOTFS_IMAGE_SIZE=20G
           ROOTFS_UUID=
-          ROOTFS_LABEL=Y700ROOTFS
+          ROOTFS_LABEL=Y700UBUNTU
           ROOTFS_PARTLABEL=userdata
           HOSTNAME_NAME=y700
           DEFAULT_USER_NAME=y700
@@ -33,9 +34,9 @@ on:
           TZ_REGION=Asia/Shanghai
           LANG_NAME=zh_CN.UTF-8
           PACKAGE_LIST=
-          DESKTOP_ENV=plasma-desktop
+          DESKTOP_ENV=kubuntu-desktop
           OVERLAY_ARCHIVE=
-          DEB_ARCHIVE=
+          DEB_ARCHIVE=https://github.com/GUF296/ubuntu-y700-build-ci/releases/download/bootstrap-y700-20260625/y700-device-debs-20260624-201420.tar.gz
           CLEAN_APT_CACHE=1
           COMPRESS=7z
           CHUNK_SIZE=1500m
@@ -136,7 +137,7 @@ jobs:
       - name: Build rootfs image
         run: |
           set -euo pipefail
-          sudo --preserve-env=OUTPUT_PREFIX,DISTRO,ARCH,MIRROR,APT_SOURCES_LIST,ROOTFS_IMAGE_SIZE,ROOTFS_UUID,ROOTFS_LABEL,ROOTFS_PARTLABEL,HOSTNAME_NAME,DEFAULT_USER_NAME,DEFAULT_USER_PASSWORD,ROOT_PASSWORD_MODE,ROOT_PASSWORD,USER_SUDO_MODE,TZ_REGION,LOCALES,LANG_NAME,PACKAGE_LIST,DESKTOP_ENV,OVERLAY_ARCHIVE,DEB_ARCHIVE,CLEAN_APT_CACHE,COMPRESS,CHUNK_SIZE,KEEP_RAW_IMAGE \
+          sudo --preserve-env=OUTPUT_PREFIX,DISTRO,ARCH,MIRROR,DEBOOTSTRAP_VARIANT,RESOLV_CONF_CONTENT,APT_HTTP_PROXY,APT_HTTPS_PROXY,http_proxy,https_proxy,HTTP_PROXY,HTTPS_PROXY,APT_SOURCES_LIST,ROOTFS_IMAGE_SIZE,ROOTFS_UUID,ROOTFS_LABEL,ROOTFS_PARTLABEL,HOSTNAME_NAME,DEFAULT_USER_NAME,DEFAULT_USER_PASSWORD,ROOT_PASSWORD_MODE,ROOT_PASSWORD,USER_SUDO_MODE,TZ_REGION,LOCALES,LANG_NAME,PACKAGE_LIST,DESKTOP_ENV,OVERLAY_ARCHIVE,DEB_ARCHIVE,CLEAN_APT_CACHE,COMPRESS,CHUNK_SIZE,KEEP_RAW_IMAGE \
             env OUTPUT_DIR="$OUTPUT_DIR_ROOTFS" bash scripts/ci/build-rootfs-image.sh
           sudo chown -R "$USER:$USER" out
 
