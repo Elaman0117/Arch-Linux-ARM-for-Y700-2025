@@ -39,6 +39,9 @@ Environment inputs:
   ROOTARGS                   optional full rootargs override
   ROOTARGS_EXTRA             appended to generated rootargs
   STABLEARGS                 default: drm_client_lib.active=none
+  BOOT_COMPRESS              none|zstd|xz|7z, default: 7z
+  BOOT_CHUNK_SIZE            optional 7z volume size, default: 1500m
+  KEEP_BOOT_IMAGE            keep uncompressed boot image after packaging, default: 0
 USAGE
 }
 
@@ -62,6 +65,9 @@ GRUB_TIMEOUT=${GRUB_TIMEOUT:-3}
 ROOT_PARTLABEL=${ROOT_PARTLABEL:-userdata}
 ROOT_SELECTOR=${ROOT_SELECTOR:-partlabel}
 STABLEARGS=${STABLEARGS:-drm_client_lib.active=none}
+BOOT_COMPRESS=${BOOT_COMPRESS:-7z}
+BOOT_CHUNK_SIZE=${BOOT_CHUNK_SIZE:-1500m}
+KEEP_BOOT_IMAGE=${KEEP_BOOT_IMAGE:-0}
 
 mkdir -p "$OUTPUT_DIR"
 work_dir=$(mktemp -d "$OUTPUT_DIR/.grub-build.XXXXXX")
@@ -149,5 +155,42 @@ ci_log "copying boot payload into FAT image"
 mmd -i "$boot_img" ::/EFI ::/EFI/BOOT ::/dtb
 mcopy -i "$boot_img" -s "$payload_dir"/* ::/
 
-(cd "$OUTPUT_DIR" && sha256sum "$(basename "$boot_img")" > "${OUTPUT_PREFIX}-grub-fat.SHA256SUMS")
-ci_log "GRUB boot image complete: $boot_img"
+raw_sha_file="$OUTPUT_DIR/${OUTPUT_PREFIX}-grub-fat.raw.sha256"
+checksum_file="$OUTPUT_DIR/${OUTPUT_PREFIX}-grub-fat.SHA256SUMS"
+(cd "$OUTPUT_DIR" && sha256sum "$(basename "$boot_img")" > "$(basename "$raw_sha_file")")
+rm -f "$checksum_file"
+(cd "$OUTPUT_DIR" && sha256sum "$(basename "$raw_sha_file")" > "$(basename "$checksum_file")")
+
+case "$BOOT_COMPRESS" in
+  none)
+    (cd "$OUTPUT_DIR" && sha256sum "$(basename "$boot_img")" >> "$(basename "$checksum_file")")
+    ;;
+  zstd)
+    ci_require_cmd zstd
+    zstd -T0 -19 -f "$boot_img" -o "$boot_img.zst"
+    (cd "$OUTPUT_DIR" && sha256sum "$(basename "$boot_img").zst" >> "$(basename "$checksum_file")")
+    ;;
+  xz)
+    xz -T0 -k -f "$boot_img"
+    (cd "$OUTPUT_DIR" && sha256sum "$(basename "$boot_img").xz" >> "$(basename "$checksum_file")")
+    ;;
+  7z)
+    ci_require_cmd 7z
+    sevenz_out="$boot_img.7z"
+    rm -f "$sevenz_out" "$sevenz_out".*
+    if [ -n "${BOOT_CHUNK_SIZE:-}" ]; then
+      7z a "$sevenz_out" "$boot_img" -t7z -m0=lzma2 -mx=9 -mmt=on "-v$BOOT_CHUNK_SIZE" >/dev/null
+      (cd "$OUTPUT_DIR" && sha256sum "$(basename "$sevenz_out")".* >> "$(basename "$checksum_file")")
+    else
+      7z a "$sevenz_out" "$boot_img" -t7z -m0=lzma2 -mx=9 -mmt=on >/dev/null
+      (cd "$OUTPUT_DIR" && sha256sum "$(basename "$sevenz_out")" >> "$(basename "$checksum_file")")
+    fi
+    ;;
+  *) ci_die "unsupported BOOT_COMPRESS=$BOOT_COMPRESS" ;;
+esac
+
+if [ "$BOOT_COMPRESS" != none ] && [ "$KEEP_BOOT_IMAGE" != 1 ]; then
+  rm -f "$boot_img"
+fi
+
+ci_log "GRUB boot image complete: $OUTPUT_DIR"

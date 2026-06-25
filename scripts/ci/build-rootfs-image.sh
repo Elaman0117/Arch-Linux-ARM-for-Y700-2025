@@ -39,8 +39,9 @@ Environment inputs:
   DEB_ARCHIVE                optional local path or URL containing .deb files
   DEB_DIR                    optional directory containing .deb files
   CLEAN_APT_CACHE            default: 1
-  COMPRESS                   none|zstd|xz|7z, default: zstd
+  COMPRESS                   none|zstd|xz|7z, default: 7z
   CHUNK_SIZE                 optional 7z volume size, example: 1500m
+  KEEP_RAW_IMAGE             keep uncompressed rootfs image after packaging, default: 0
 USAGE
 }
 
@@ -74,8 +75,11 @@ ROOT_PASSWORD=${ROOT_PASSWORD:-}
 USER_SUDO_MODE=${USER_SUDO_MODE:-password}
 TZ_REGION=${TZ_REGION:-Asia/Shanghai}
 LANG_NAME=${LANG_NAME:-zh_CN.UTF-8}
+LOCALES=${LOCALES:-$'en_US.UTF-8 UTF-8\nzh_CN.UTF-8 UTF-8'}
 CLEAN_APT_CACHE=${CLEAN_APT_CACHE:-1}
-COMPRESS=${COMPRESS:-zstd}
+COMPRESS=${COMPRESS:-7z}
+CHUNK_SIZE=${CHUNK_SIZE:-1500m}
+KEEP_RAW_IMAGE=${KEEP_RAW_IMAGE:-0}
 
 default_packages="systemd systemd-sysv dbus sudo locales tzdata ca-certificates gnupg curl wget network-manager openssh-server nano vim rsync kmod initramfs-tools"
 PACKAGE_LIST=${PACKAGE_LIST:-$default_packages}
@@ -250,7 +254,7 @@ chroot "$rootfs_dir" env -i \
   ROOT_PASSWORD="$ROOT_PASSWORD" \
   USER_SUDO_MODE="$USER_SUDO_MODE" \
   TZ_REGION="$TZ_REGION" \
-  LOCALES="${LOCALES:-en_US.UTF-8 UTF-8$'\n'zh_CN.UTF-8 UTF-8}" \
+  LOCALES="$LOCALES" \
   LANG_NAME="$LANG_NAME" \
   CLEAN_APT_CACHE="$CLEAN_APT_CACHE" \
   bash /root/ci-provision.sh
@@ -295,18 +299,25 @@ mounted=0
 e2fsck -f -y "$rootfs_img"
 
 ci_log "checksumming rootfs image"
-(cd "$OUTPUT_DIR" && sha256sum "$(basename "$rootfs_img")" "$(basename "$manifest")" > "${OUTPUT_PREFIX}-rootfs.SHA256SUMS")
+raw_sha_file="$OUTPUT_DIR/${OUTPUT_PREFIX}-rootfs.raw.sha256"
+(cd "$OUTPUT_DIR" && sha256sum "$(basename "$rootfs_img")" > "$(basename "$raw_sha_file")")
+
+checksum_file="$OUTPUT_DIR/${OUTPUT_PREFIX}-rootfs.SHA256SUMS"
+rm -f "$checksum_file"
+(cd "$OUTPUT_DIR" && sha256sum "$(basename "$manifest")" "$(basename "$raw_sha_file")" > "$(basename "$checksum_file")")
 
 case "$COMPRESS" in
-  none) ;;
+  none)
+    (cd "$OUTPUT_DIR" && sha256sum "$(basename "$rootfs_img")" >> "$(basename "$checksum_file")")
+    ;;
   zstd)
     ci_require_cmd zstd
     zstd -T0 -19 -f "$rootfs_img" -o "$rootfs_img.zst"
-    (cd "$OUTPUT_DIR" && sha256sum "$(basename "$rootfs_img").zst" >> "${OUTPUT_PREFIX}-rootfs.SHA256SUMS")
+    (cd "$OUTPUT_DIR" && sha256sum "$(basename "$rootfs_img").zst" >> "$(basename "$checksum_file")")
     ;;
   xz)
     xz -T0 -k -f "$rootfs_img"
-    (cd "$OUTPUT_DIR" && sha256sum "$(basename "$rootfs_img").xz" >> "${OUTPUT_PREFIX}-rootfs.SHA256SUMS")
+    (cd "$OUTPUT_DIR" && sha256sum "$(basename "$rootfs_img").xz" >> "$(basename "$checksum_file")")
     ;;
   7z)
     ci_require_cmd 7z
@@ -314,13 +325,17 @@ case "$COMPRESS" in
     rm -f "$sevenz_out" "$sevenz_out".*
     if [ -n "${CHUNK_SIZE:-}" ]; then
       7z a "$sevenz_out" "$rootfs_img" -t7z -m0=lzma2 -mx=9 -mmt=on "-v$CHUNK_SIZE" >/dev/null
-      (cd "$OUTPUT_DIR" && sha256sum "$(basename "$sevenz_out")".* >> "${OUTPUT_PREFIX}-rootfs.SHA256SUMS")
+      (cd "$OUTPUT_DIR" && sha256sum "$(basename "$sevenz_out")".* >> "$(basename "$checksum_file")")
     else
       7z a "$sevenz_out" "$rootfs_img" -t7z -m0=lzma2 -mx=9 -mmt=on >/dev/null
-      (cd "$OUTPUT_DIR" && sha256sum "$(basename "$sevenz_out")" >> "${OUTPUT_PREFIX}-rootfs.SHA256SUMS")
+      (cd "$OUTPUT_DIR" && sha256sum "$(basename "$sevenz_out")" >> "$(basename "$checksum_file")")
     fi
     ;;
   *) ci_die "unsupported COMPRESS=$COMPRESS" ;;
 esac
+
+if [ "$COMPRESS" != none ] && [ "$KEEP_RAW_IMAGE" != 1 ]; then
+  rm -f "$rootfs_img"
+fi
 
 ci_log "rootfs build complete: $OUTPUT_DIR"
