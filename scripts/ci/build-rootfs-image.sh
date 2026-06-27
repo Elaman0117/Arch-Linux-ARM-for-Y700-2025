@@ -44,9 +44,11 @@ Environment inputs:
   DEB_DIR                    optional directory containing .deb files
   SENSOR_DEB_DIR             optional directory containing source-built sensor .deb files
   HAPTICS_DEB_DIR            optional directory containing source-built haptics .deb files
+  CAMERA_STACK_DEB_DIR       optional directory containing source-built camera stack .deb files
   BUILD_TB321FU_GPU_SENSOR   build/install TB321FU KSystemStats Adreno frequency plugin, default: 1
   TB321FU_GPU_SENSOR_SOURCE_DIR
                               optional source directory for the plugin; defaults to repo source/
+  INSTALL_GNOME_SNAPSHOT     install GNOME Snapshot camera app, default: 1
   APPLY_Y700_FIRMWARE_FIXES  copy/verify required Y700 firmware paths only, default: 1
   APPLY_Y700_AUDIO_POLICY_FIXES
                               install Y700 WirePlumber ALSA policy for headset mic, default: 1
@@ -97,6 +99,7 @@ APPLY_Y700_FIRMWARE_FIXES=${APPLY_Y700_FIRMWARE_FIXES:-1}
 APPLY_Y700_AUDIO_POLICY_FIXES=${APPLY_Y700_AUDIO_POLICY_FIXES:-1}
 BUILD_TB321FU_GPU_SENSOR=${BUILD_TB321FU_GPU_SENSOR:-1}
 TB321FU_GPU_SENSOR_SOURCE_DIR=${TB321FU_GPU_SENSOR_SOURCE_DIR:-}
+INSTALL_GNOME_SNAPSHOT=${INSTALL_GNOME_SNAPSHOT:-1}
 COMPRESS=${COMPRESS:-7z}
 CHUNK_SIZE=${CHUNK_SIZE:-1500m}
 KEEP_RAW_IMAGE=${KEEP_RAW_IMAGE:-0}
@@ -105,6 +108,9 @@ default_packages="systemd systemd-sysv dbus sudo locales tzdata ca-certificates 
 PACKAGE_LIST=${PACKAGE_LIST:-$default_packages}
 if [ -n "${DESKTOP_ENV:-}" ]; then
   PACKAGE_LIST="$PACKAGE_LIST $DESKTOP_ENV"
+fi
+if ci_bool "$INSTALL_GNOME_SNAPSHOT"; then
+  PACKAGE_LIST="$PACKAGE_LIST gnome-snapshot"
 fi
 
 mkdir -p "$OUTPUT_DIR"
@@ -605,6 +611,11 @@ if [ -n "${HAPTICS_DEB_DIR:-}" ]; then
   ci_log "including source-built haptics debs from: $HAPTICS_DEB_DIR"
   find "$HAPTICS_DEB_DIR" -maxdepth 1 -type f -name '*.deb' -exec cp -a {} "$rootfs_dir/var/tmp/ci-debs/" \;
 fi
+if [ -n "${CAMERA_STACK_DEB_DIR:-}" ]; then
+  mkdir -p "$rootfs_dir/var/tmp/ci-debs"
+  ci_log "including source-built camera stack debs from: $CAMERA_STACK_DEB_DIR"
+  find "$CAMERA_STACK_DEB_DIR" -maxdepth 1 -type f -name '*.deb' -exec cp -a {} "$rootfs_dir/var/tmp/ci-debs/" \;
+fi
 
 ci_log "provisioning rootfs"
 chroot "$rootfs_dir" env -i \
@@ -678,8 +689,10 @@ deb_archive=${DEB_ARCHIVE:-}
 deb_dir=${DEB_DIR:-}
 sensor_deb_dir=${SENSOR_DEB_DIR:-}
 haptics_deb_dir=${HAPTICS_DEB_DIR:-}
+camera_stack_deb_dir=${CAMERA_STACK_DEB_DIR:-}
 build_tb321fu_gpu_sensor=$BUILD_TB321FU_GPU_SENSOR
 tb321fu_gpu_sensor_source_dir=${TB321FU_GPU_SENSOR_SOURCE_DIR:-repo-default}
+install_gnome_snapshot=$INSTALL_GNOME_SNAPSHOT
 apply_y700_firmware_fixes=$APPLY_Y700_FIRMWARE_FIXES
 apply_y700_audio_policy_fixes=$APPLY_Y700_AUDIO_POLICY_FIXES
 INFO

@@ -48,9 +48,14 @@ on:
           KERNEL_BUILD_ARCHIVE=
           HAPTICS_DEB_VERSION=20260627.1
           HAPTICS_STRIP=1
+          BUILD_TB321FU_CAMERA_STACK=1
+          CAMERA_STACK_ARCHIVE=
+          CAMERA_STACK_DIR=
+          CAMERA_STACK_DEB_VERSION=20260627.4
           BUILD_TB321FU_GPU_SENSOR=1
           TB321FU_GPU_SENSOR_SOURCE_DIR=
           TB321FU_GPU_SENSOR_BUILD_JOBS=2
+          INSTALL_GNOME_SNAPSHOT=1
           APPLY_Y700_FIRMWARE_FIXES=1
           APPLY_Y700_AUDIO_POLICY_FIXES=1
           CLEAN_APT_CACHE=1
@@ -105,7 +110,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             debootstrap dosfstools mtools e2fsprogs rsync curl unzip tar xz-utils zstd p7zip-full \
-            gdisk qemu-utils sudo ca-certificates gnupg \
+            gdisk qemu-utils sudo ca-certificates gnupg binutils \
             meson ninja-build pkg-config protobuf-c-compiler gcc-aarch64-linux-gnu \
             libglib2.0-dev:arm64 libqmi-glib-dev:arm64 libgudev-1.0-dev:arm64 libpolkit-gobject-1-dev:arm64 libprotobuf-c-dev:arm64
 
@@ -221,11 +226,27 @@ jobs:
             bash scripts/ci/build-tb321fu-haptics-deb.sh
           echo 'TB321FU_HAPTICS_DEB_DIR=out/tb321fu-haptics-debs' >> "$GITHUB_ENV"
 
+      - name: Build verified camera stack deb
+        run: |
+          set -euo pipefail
+          if [ "${BUILD_TB321FU_CAMERA_STACK:-0}" != "1" ]; then
+            echo 'BUILD_TB321FU_CAMERA_STACK is not 1; skipping.'
+            echo 'TB321FU_CAMERA_STACK_DEB_DIR=' >> "$GITHUB_ENV"
+            exit 0
+          fi
+          env OUTPUT_DIR="out/tb321fu-camera-stack-debs" \
+            ARCH="${ARCH:-arm64}" \
+            CAMERA_STACK_DEB_VERSION="${CAMERA_STACK_DEB_VERSION:-20260627.4}" \
+            CAMERA_STACK_ARCHIVE="${CAMERA_STACK_ARCHIVE:-}" \
+            CAMERA_STACK_DIR="${CAMERA_STACK_DIR:-}" \
+            bash scripts/ci/build-tb321fu-camera-stack-deb.sh
+          echo 'TB321FU_CAMERA_STACK_DEB_DIR=out/tb321fu-camera-stack-debs' >> "$GITHUB_ENV"
+
       - name: Build rootfs image
         run: |
           set -euo pipefail
-          sudo --preserve-env=OUTPUT_PREFIX,DISTRO,ARCH,MIRROR,DEBOOTSTRAP_VARIANT,RESOLV_CONF_CONTENT,APT_HTTP_PROXY,APT_HTTPS_PROXY,http_proxy,https_proxy,HTTP_PROXY,HTTPS_PROXY,APT_SOURCES_LIST,ROOTFS_IMAGE_SIZE,ROOTFS_UUID,ROOTFS_LABEL,ROOTFS_PARTLABEL,HOSTNAME_NAME,DEFAULT_USER_NAME,DEFAULT_USER_PASSWORD,ROOT_PASSWORD_MODE,ROOT_PASSWORD,USER_SUDO_MODE,TZ_REGION,LOCALES,LANG_NAME,PACKAGE_LIST,DESKTOP_ENV,OVERLAY_ARCHIVE,DEB_ARCHIVE,DEB_DIR,SENSOR_DEB_DIR,HAPTICS_DEB_DIR,BUILD_TB321FU_GPU_SENSOR,TB321FU_GPU_SENSOR_SOURCE_DIR,TB321FU_GPU_SENSOR_BUILD_JOBS,APPLY_Y700_FIRMWARE_FIXES,APPLY_Y700_AUDIO_POLICY_FIXES,CLEAN_APT_CACHE,COMPRESS,CHUNK_SIZE,KEEP_RAW_IMAGE \
-            env OUTPUT_DIR="$OUTPUT_DIR_ROOTFS" SENSOR_DEB_DIR="${Y700_SENSOR_DEB_DIR:-}" HAPTICS_DEB_DIR="${TB321FU_HAPTICS_DEB_DIR:-}" bash scripts/ci/build-rootfs-image.sh
+          sudo --preserve-env=OUTPUT_PREFIX,DISTRO,ARCH,MIRROR,DEBOOTSTRAP_VARIANT,RESOLV_CONF_CONTENT,APT_HTTP_PROXY,APT_HTTPS_PROXY,http_proxy,https_proxy,HTTP_PROXY,HTTPS_PROXY,APT_SOURCES_LIST,ROOTFS_IMAGE_SIZE,ROOTFS_UUID,ROOTFS_LABEL,ROOTFS_PARTLABEL,HOSTNAME_NAME,DEFAULT_USER_NAME,DEFAULT_USER_PASSWORD,ROOT_PASSWORD_MODE,ROOT_PASSWORD,USER_SUDO_MODE,TZ_REGION,LOCALES,LANG_NAME,PACKAGE_LIST,DESKTOP_ENV,OVERLAY_ARCHIVE,DEB_ARCHIVE,DEB_DIR,SENSOR_DEB_DIR,HAPTICS_DEB_DIR,CAMERA_STACK_DEB_DIR,BUILD_TB321FU_GPU_SENSOR,TB321FU_GPU_SENSOR_SOURCE_DIR,TB321FU_GPU_SENSOR_BUILD_JOBS,INSTALL_GNOME_SNAPSHOT,APPLY_Y700_FIRMWARE_FIXES,APPLY_Y700_AUDIO_POLICY_FIXES,CLEAN_APT_CACHE,COMPRESS,CHUNK_SIZE,KEEP_RAW_IMAGE \
+            env OUTPUT_DIR="$OUTPUT_DIR_ROOTFS" SENSOR_DEB_DIR="${Y700_SENSOR_DEB_DIR:-}" HAPTICS_DEB_DIR="${TB321FU_HAPTICS_DEB_DIR:-}" CAMERA_STACK_DEB_DIR="${TB321FU_CAMERA_STACK_DEB_DIR:-}" bash scripts/ci/build-rootfs-image.sh
           sudo chown -R "$USER:$USER" out
 
       - name: Build GRUB boot image
@@ -268,6 +289,9 @@ jobs:
           if [ -d out/tb321fu-haptics-debs ]; then
             checksum_dirs+=(out/tb321fu-haptics-debs)
           fi
+          if [ -d out/tb321fu-camera-stack-debs ]; then
+            checksum_dirs+=(out/tb321fu-camera-stack-debs)
+          fi
           find "${checksum_dirs[@]}" -maxdepth 1 -type f -print0 | sort -z | xargs -0 sha256sum > out/ci-release/SHA256SUMS.txt
 
       - name: Upload workflow artifacts
@@ -279,6 +303,7 @@ jobs:
             out/ci-grub/*
             out/y700-sensor-debs/*
             out/tb321fu-haptics-debs/*
+            out/tb321fu-camera-stack-debs/*
             out/ci-release/SHA256SUMS.txt
 
       - name: Upload release assets
@@ -295,5 +320,8 @@ jobs:
           fi
           if compgen -G 'out/tb321fu-haptics-debs/*' >/dev/null; then
             release_assets+=(out/tb321fu-haptics-debs/*)
+          fi
+          if compgen -G 'out/tb321fu-camera-stack-debs/*' >/dev/null; then
+            release_assets+=(out/tb321fu-camera-stack-debs/*)
           fi
           gh release upload "$RELEASE_TAG" "${release_assets[@]}" --clobber
